@@ -1,0 +1,80 @@
+[
+  {
+    "threshold": 0.7,
+    "total_queries": 15,
+    "hits": 15,
+    "misses": 0,
+    "hit_rate": 1.0,
+    "tokens_saved": 900,
+    "cost_saved_usd": 0.0045,
+    "cost_full_usd": 0.0045,
+    "savings_pct": 100.0,
+    "avg_latency_hit_ms": 12.8,
+    "avg_latency_miss_ms": 0
+  },
+  {
+    "threshold": 0.75,
+    "total_queries": 15,
+    "hits": 14,
+    "misses": 1,
+    "hit_rate": 0.933,
+    "tokens_saved": 840,
+    "cost_saved_usd": 0.0042,
+    "cost_full_usd": 0.0045,
+    "savings_pct": 93.3,
+    "avg_latency_hit_ms": 7.6,
+    "avg_latency_miss_ms": 7.7
+  },
+  {
+    "threshold": 0.8,
+    "total_queries": 15,
+    "hits": 14,
+    "misses": 1,
+    "hit_rate": 0.933,
+    "tokens_saved": 840,
+    "cost_saved_usd": 0.0042,
+    "cost_full_usd": 0.0045,
+    "savings_pct": 93.3,
+    "avg_latency_hit_ms": 7.4,
+    "avg_latency_miss_ms": 7.4
+  },
+  {
+    "threshold": 0.85,
+    "total_queries": 15,
+    "hits": 10,
+    "misses": 5,
+    "hit_rate": 0.667,
+    "tokens_saved": 600,
+    "cost_saved_usd": 0.003,
+    "cost_full_usd": 0.0045,
+    "savings_pct": 66.7,
+    "avg_latency_hit_ms": 7.3,
+    "avg_latency_miss_ms": 7.4
+  },
+  {
+    "threshold": 0.9,
+    "total_queries": 15,
+    "hits": 5,
+    "misses": 10,
+    "hit_rate": 0.333,
+    "tokens_saved": 300,
+    "cost_saved_usd": 0.0015,
+    "cost_full_usd": 0.0045,
+    "savings_pct": 33.3,
+    "avg_latency_hit_ms": 7.4,
+    "avg_latency_miss_ms": 7.4
+  },
+  {
+    "threshold": 0.95,
+    "total_queries": 15,
+    "hits": 0,
+    "misses": 15,
+    "hit_rate": 0.0,
+    "tokens_saved": 0,
+    "cost_saved_usd": 0.0,
+    "cost_full_usd": 0.0045,
+    "savings_pct": 0.0,
+    "avg_latency_hit_ms": 0,
+    "avg_latency_miss_ms": 7.5
+  }
+]
