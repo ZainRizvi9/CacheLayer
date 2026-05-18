@@ -3,39 +3,70 @@ import sqlite3
 import numpy as np
 import json
 import os
+import secrets
 from src.embedder import embed, similarity
-from dataclasses import dataclass
 
 DB_PATH = os.getenv("CACHE_DB", "cache.db")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            api_key     TEXT UNIQUE NOT NULL,
+            email       TEXT UNIQUE NOT NULL,
+            created_at  REAL NOT NULL,
+            is_active   INTEGER DEFAULT 1
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS cache (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id   INTEGER NOT NULL,
             query     TEXT NOT NULL,
             response  TEXT NOT NULL,
             embedding TEXT NOT NULL,
             timestamp REAL NOT NULL,
-            hits      INTEGER DEFAULT 0
+            hits      INTEGER DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS stats (
-            id             INTEGER PRIMARY KEY CHECK (id = 1),
+            user_id        INTEGER PRIMARY KEY,
             total_queries  INTEGER DEFAULT 0,
             cache_hits     INTEGER DEFAULT 0,
-            tokens_saved   INTEGER DEFAULT 0
+            tokens_saved   INTEGER DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )
-    """)
-    conn.execute("""
-        INSERT OR IGNORE INTO stats (id, total_queries, cache_hits, tokens_saved)
-        VALUES (1, 0, 0, 0)
     """)
     conn.commit()
     conn.close()
 
 init_db()
+
+def create_user(email: str) -> str:
+    api_key = f"cl_{secrets.token_urlsafe(24)}"
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO users (api_key, email, created_at) VALUES (?, ?, ?)",
+            (api_key, email, time.time())
+        )
+        user_id = conn.execute(
+            "SELECT id FROM users WHERE api_key = ?", (api_key,)
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO stats (user_id) VALUES (?)", (user_id,)
+        )
+    return api_key
+
+def get_user_id(api_key: str) -> int | None:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT id FROM users WHERE api_key = ? AND is_active = 1",
+            (api_key,)
+        ).fetchone()
+    return row[0] if row else None
 
 class SemanticCache:
     def __init__(self, threshold: float = 0.80, ttl: int = 3600):
@@ -45,16 +76,18 @@ class SemanticCache:
     def _conn(self):
         return sqlite3.connect(DB_PATH)
 
-    def get(self, query: str) -> str | None:
+    def get(self, query: str, user_id: int) -> str | None:
         q_emb = embed(query)
         now = time.time()
 
         with self._conn() as conn:
             conn.execute(
-                "UPDATE stats SET total_queries = total_queries + 1 WHERE id = 1"
+                "UPDATE stats SET total_queries = total_queries + 1 WHERE user_id = ?",
+                (user_id,)
             )
             rows = conn.execute(
-                "SELECT id, response, embedding, timestamp FROM cache"
+                "SELECT id, response, embedding, timestamp FROM cache WHERE user_id = ?",
+                (user_id,)
             ).fetchall()
 
             for row_id, response, emb_json, timestamp in rows:
@@ -71,46 +104,50 @@ class SemanticCache:
                         UPDATE stats
                         SET cache_hits   = cache_hits + 1,
                             tokens_saved = tokens_saved + ?
-                        WHERE id = 1
-                    """, (tokens,))
+                        WHERE user_id = ?
+                    """, (tokens, user_id))
                     return response
         return None
 
-    def set(self, query: str, response: str) -> None:
+    def set(self, query: str, response: str, user_id: int) -> None:
         emb = embed(query)
         with self._conn() as conn:
             conn.execute("""
-                INSERT INTO cache (query, response, embedding, timestamp)
-                VALUES (?, ?, ?, ?)
-            """, (query, response, json.dumps(emb.tolist()), time.time()))
+                INSERT INTO cache (user_id, query, response, embedding, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, query, response, json.dumps(emb.tolist()), time.time()))
 
-    def stats(self) -> dict:
+    def stats(self, user_id: int) -> dict:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT total_queries, cache_hits, tokens_saved FROM stats WHERE id = 1"
+                "SELECT total_queries, cache_hits, tokens_saved FROM stats WHERE user_id = ?",
+                (user_id,)
             ).fetchone()
             entries = conn.execute(
-                "SELECT COUNT(*) FROM cache"
+                "SELECT COUNT(*) FROM cache WHERE user_id = ?", (user_id,)
             ).fetchone()[0]
             top = conn.execute(
-                "SELECT query, hits FROM cache ORDER BY hits DESC LIMIT 5"
+                "SELECT query, hits FROM cache WHERE user_id = ? ORDER BY hits DESC LIMIT 5",
+                (user_id,)
             ).fetchall()
 
+        if not row:
+            return {}
         total, hits, tokens = row
-        hit_rate = hits / total if total else 0
         return {
             "total_queries":  total,
             "cache_hits":     hits,
-            "hit_rate":       round(hit_rate, 3),
+            "hit_rate":       round(hits / total, 3) if total else 0,
             "tokens_saved":   tokens,
             "cost_saved_usd": round(tokens * 0.000002, 4),
             "entries":        entries,
             "top_queries":    [{"query": q, "hits": h} for q, h in top]
         }
 
-    def clear(self) -> None:
+    def clear(self, user_id: int) -> None:
         with self._conn() as conn:
-            conn.execute("DELETE FROM cache")
+            conn.execute("DELETE FROM cache WHERE user_id = ?", (user_id,))
             conn.execute(
-                "UPDATE stats SET total_queries=0, cache_hits=0, tokens_saved=0 WHERE id=1"
+                "UPDATE stats SET total_queries=0, cache_hits=0, tokens_saved=0 WHERE user_id=?",
+                (user_id,)
             )
