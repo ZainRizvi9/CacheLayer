@@ -1,15 +1,27 @@
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import httpx
-import json
 import time
+import os
 from src.cache import SemanticCache, get_user_id, create_user
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="CacheLayer")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 cache = SemanticCache(threshold=0.80)
 
 OPENAI_BASE    = "https://api.openai.com"
 ANTHROPIC_BASE = "https://api.anthropic.com"
+
+@app.get("/", response_class=HTMLResponse)
+async def landing():
+    with open("landing.html", "r") as f:
+        return f.read()
 
 def is_anthropic(model: str) -> bool:
     return "claude" in model.lower()
@@ -45,36 +57,32 @@ def get_cachelayer_key(request: Request) -> str | None:
     auth = request.headers.get("Authorization", "")
     if auth.startswith("Bearer cl_"):
         return auth.replace("Bearer ", "")
-    # Also check X-CacheLayer-Key header
     return request.headers.get("X-CacheLayer-Key")
 
 def get_upstream_key(request: Request) -> str:
     return request.headers.get("X-Upstream-Key", "")
 
 @app.post("/v1/chat/completions")
+@limiter.limit("60/minute")
 async def chat_completions(request: Request):
     body = await request.json()
     model = body.get("model", "gpt-4o")
 
-    # Auth — extract CacheLayer API key
     cl_key = get_cachelayer_key(request)
     if not cl_key:
-        raise HTTPException(status_code=401, detail="Missing CacheLayer API key. Pass it as Authorization: Bearer cl_... or X-CacheLayer-Key header.")
-
+        raise HTTPException(status_code=401, detail="Missing CacheLayer API key.")
     user_id = get_user_id(cl_key)
     if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid or inactive CacheLayer API key.")
+        raise HTTPException(status_code=401, detail="Invalid or inactive API key.")
 
     query = extract_query(body)
     upstream_key = get_upstream_key(request)
 
-    # Cache lookup
     if query:
         cached = cache.get(query, user_id)
         if cached:
             return JSONResponse(make_cached_response(cached, model))
 
-    # Forward to upstream provider
     if is_anthropic(model):
         headers = {
             "x-api-key": upstream_key,
@@ -89,7 +97,6 @@ async def chat_completions(request: Request):
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(f"{ANTHROPIC_BASE}/v1/messages", headers=headers, json=anthropic_body)
             result = resp.json()
-
         if query and "content" in result:
             content = result["content"][0].get("text", "")
             cache.set(query, content, user_id)
@@ -104,15 +111,14 @@ async def chat_completions(request: Request):
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(f"{OPENAI_BASE}/v1/chat/completions", headers=headers, json=body)
             result = resp.json()
-
         if query and "choices" in result:
             content = result["choices"][0]["message"]["content"]
             cache.set(query, content, user_id)
-
         return JSONResponse(result)
 
 @app.post("/register")
-async def register(email: str):
+@limiter.limit("5/minute")
+async def register(request: Request, email: str):
     try:
         api_key = create_user(email)
         return {
@@ -123,7 +129,24 @@ async def register(email: str):
     except Exception:
         raise HTTPException(status_code=400, detail="Email already registered.")
 
+@app.post("/warm")
+@limiter.limit("10/minute")
+async def warm(request: Request, queries: list[str]):
+    cl_key = get_cachelayer_key(request)
+    if not cl_key:
+        raise HTTPException(status_code=401, detail="Missing API key.")
+    user_id = get_user_id(cl_key)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid API key.")
+    from src.embedder import embed
+    warmed = []
+    for q in queries:
+        embed(q)
+        warmed.append(q)
+    return {"warmed": len(warmed), "queries": warmed}
+
 @app.get("/stats")
+@limiter.limit("30/minute")
 async def stats(request: Request):
     cl_key = get_cachelayer_key(request)
     if not cl_key:
@@ -134,6 +157,7 @@ async def stats(request: Request):
     return cache.stats(user_id)
 
 @app.post("/seed")
+@limiter.limit("30/minute")
 async def seed(request: Request, query: str, response: str):
     cl_key = get_cachelayer_key(request)
     if not cl_key:

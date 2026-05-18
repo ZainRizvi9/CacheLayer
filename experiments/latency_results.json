@@ -1,0 +1,6 @@
+{
+  "avg_hit_ms": 8.35,
+  "avg_miss_ms": 8.52,
+  "api_baseline_ms": 1800,
+  "speedup": 215.6
+}
