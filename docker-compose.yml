@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  proxy:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - cache_data:/data
+    environment:
+      - CACHE_DB=/data/cache.db
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    command: streamlit run dashboard.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    depends_on:
+      - proxy
+    restart: unless-stopped
+
+volumes:
+  cache_data:
