@@ -1,3 +1,4 @@
+cat > README.md << 'EOF'
 # CacheLayer
 
 LLM APIs charge per token. The problem is that users ask the same questions constantly, just worded differently. A solutions engineer asks "what is the implementation timeline for Salesforce Service Cloud." A project manager on the same team asks "how long does a typical Service Cloud deployment take." A consultant asks "what is the average delivery timeline for a Service Cloud project." Three API calls, three identical answers, three times the cost.
@@ -6,21 +7,38 @@ Exact string caching does not help because the strings do not match. CacheLayer 
 
 ## What it does
 
-CacheLayer sits between your application and OpenAI. You point your existing code at it instead of the OpenAI endpoint and nothing else changes. When a query comes in, it gets converted to a vector embedding and compared against everything in the cache. If something similar enough already has an answer, it returns that instantly. No API call, no tokens spent.
+CacheLayer sits between your application and any LLM provider. You point your existing code at it instead of the OpenAI or Anthropic endpoint and nothing else changes. When a query comes in, it gets converted to a vector embedding and compared against everything in the cache. If something similar enough already has an answer, it returns that instantly. No API call, no tokens spent.
 
-If nothing matches, it forwards the request to OpenAI as normal, caches the response, and returns it.
+If nothing matches, it forwards the request to the real API as normal, caches the response, and returns it.
 
-## Plug it in
+## Works with any LLM provider
+
+CacheLayer is provider-agnostic. Point it at OpenAI, Anthropic, Cohere, or any OpenAI-compatible API.
 
 ```python
-# Before
-client = OpenAI(base_url="https://api.openai.com")
+# OpenAI
+client = OpenAI(base_url="https://cachelayer.up.railway.app")
 
-# After
-client = OpenAI(base_url="http://localhost:8000")
+# Anthropic via compatible wrapper
+client = Anthropic(base_url="https://cachelayer.up.railway.app")
+
+# Any OpenAI-compatible provider
+client = OpenAI(base_url="https://cachelayer.up.railway.app")
 ```
 
-That is it. Every existing call works identically.
+That is it. Every existing call works identically. One line change, zero refactoring.
+
+## Shared team cache
+
+In enterprise deployments, CacheLayer maintains a shared cache across your entire team. When one person on your team asks a question, everyone else gets the cached answer instantly — regardless of how they phrase it. A consultant who ran an analysis last week does not cost the firm another API call when a colleague asks the same question differently on Monday morning.
+
+This means cost savings compound with team size. A 10-person team asking semantically similar questions throughout the week can see cache hit rates far above what any individual user would generate alone.
+
+## Live deployment
+https://cachelayer.up.railway.app
+
+Health check: `GET https://cachelayer.up.railway.app/health`
+Stats: `GET https://cachelayer.up.railway.app/stats`
 
 ## Results
 
@@ -39,7 +57,7 @@ Evaluated across 15 paraphrased query pairs spanning enterprise software, financ
 
 At scale this compounds quickly. An enterprise tool handling 10,000 queries per day with a 70% paraphrase rate saves roughly $3/day on GPT-4o output tokens alone, over $1,000 per year for a single deployment.
 
-## Run it
+## Run it locally
 
 ```bash
 git clone https://github.com/ZainRizvi9/CacheLayer
@@ -49,13 +67,21 @@ pip install -r requirements.txt
 uvicorn src.proxy:app --port 8000
 ```
 
+Or with Docker:
+
+```bash
+docker build -t cachelayer .
+docker run -p 8000:8000 -v cachelayer_data:/data cachelayer
+```
+
 ## Endpoints
 
-- `POST /v1/chat/completions` — drop-in OpenAI replacement
+- `POST /v1/chat/completions` — drop-in replacement for any OpenAI-compatible endpoint
 - `GET /stats` — hit rate, tokens saved, cost saved in real time
 - `POST /seed` — pre-load the cache with known Q&A pairs
 - `GET /health` — health check
 
 ## Stack
 
-Python, FastAPI, sentence-transformers, NumPy, SQLite
+Python, FastAPI, sentence-transformers, NumPy, SQLite, Docker
+EOF
