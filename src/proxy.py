@@ -117,7 +117,7 @@ async def chat_completions(request: Request):
             cache.set(query, content, user_id)
         return JSONResponse(result)
 
-@app.post("/register")
+@app.api_route("/register", methods=["GET", "POST"])
 @limiter.limit("5/minute")
 async def register(request: Request, email: str):
     try:
@@ -129,7 +129,6 @@ async def register(request: Request, email: str):
         }
     except Exception:
         raise HTTPException(status_code=400, detail="Email already registered.")
-
 @app.post("/warm")
 @limiter.limit("10/minute")
 async def warm(request: Request, queries: list[str]):
