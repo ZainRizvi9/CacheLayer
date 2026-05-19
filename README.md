@@ -34,19 +34,22 @@ curl -X POST "https://cachelayer.up.railway.app/register?email=you@example.com"
 ```
 
 ## Architecture
+
+```
 Client App
-│
-│  POST /v1/chat/completions
-▼
+    │
+    │  POST /v1/chat/completions
+    ▼
 CacheLayer Proxy  (FastAPI, Railway)
-│
-│  embed query → cosine similarity search
-▼
+    │
+    │  embed query → cosine similarity search
+    ▼
 SQLite Cache (per-user isolated)
-│
-├── HIT  → return in ~8ms, $0.00 tokens
-│
-└── MISS → forward to OpenAI / Anthropic → cache → return
+    │
+    ├── HIT  → return in ~8ms, $0.00 tokens
+    │
+    └── MISS → forward to OpenAI / Anthropic → cache → return
+```
 
 ## Providers
 
@@ -60,6 +63,26 @@ response = client.chat.completions.create(model="gpt-4o", ...)
 # Anthropic
 client = Anthropic(base_url="https://cachelayer.up.railway.app")
 response = client.messages.create(model="claude-3-5-sonnet-20241022", ...)
+```
+
+## Demo
+
+```bash
+# 1. Register
+curl -X POST "https://cachelayer.up.railway.app/register?email=you@example.com"
+# → {"api_key": "cl_...", "message": "Store this key securely."}
+
+# 2. Seed the cache
+curl -X POST "https://cachelayer.up.railway.app/seed?query=what+is+a+REST+API&response=A+REST+API+uses+HTTP+methods+to+operate+on+resources." -H "Authorization: Bearer cl_..."
+# → {"seeded": true}
+
+# 3. Query with a paraphrase — different wording, same meaning
+curl -X POST https://cachelayer.up.railway.app/v1/chat/completions -H "Content-Type: application/json" -H "Authorization: Bearer cl_..." -d '{"model":"gpt-4o","messages":[{"role":"user","content":"explain what REST APIs are"}]}'
+# → {"cached": true, "usage": {"total_tokens": 0}, ...}
+
+# 4. Check your savings
+curl https://cachelayer.up.railway.app/stats -H "Authorization: Bearer cl_..."
+# → {"cache_hits": 4, "tokens_saved": 70, "hit_rate": 0.571, "cost_saved_usd": 0.0001}
 ```
 
 ## Results
