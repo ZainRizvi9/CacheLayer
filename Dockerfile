@@ -9,6 +9,7 @@ RUN python -m spacy download en_core_web_sm || true
 COPY src/ ./src/
 COPY dashboard.py .
 COPY experiments/ ./experiments/
+COPY landing.html .
 
 RUN mkdir -p /data
 
