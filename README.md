@@ -1,44 +1,66 @@
-cat > README.md << 'EOF'
 # CacheLayer
 
-LLM APIs charge per token. The problem is that users ask the same questions constantly, just worded differently. A solutions engineer asks "what is the implementation timeline for Salesforce Service Cloud." A project manager on the same team asks "how long does a typical Service Cloud deployment take." A consultant asks "what is the average delivery timeline for a Service Cloud project." Three API calls, three identical answers, three times the cost.
+LLM APIs charge per token. The problem is that users ask the same questions constantly, just worded differently. A solutions engineer asks "what is the implementation timeline for Salesforce Service Cloud." A project manager asks "how long does a typical Service Cloud deployment take." A consultant asks "what is the average delivery timeline for a Service Cloud project." Three API calls, three identical answers, three times the cost.
 
 Exact string caching does not help because the strings do not match. CacheLayer fixes this by understanding what the query means, not just what it says.
 
 ## What it does
 
-CacheLayer sits between your application and any LLM provider. You point your existing code at it instead of the OpenAI or Anthropic endpoint and nothing else changes. When a query comes in, it gets converted to a vector embedding and compared against everything in the cache. If something similar enough already has an answer, it returns that instantly. No API call, no tokens spent.
+CacheLayer sits between your application and OpenAI or Anthropic. You point your existing code at it instead of the provider endpoint and nothing else changes. When a query comes in, it gets converted to a vector embedding and compared against everything in the cache. If something similar enough already has an answer, it returns that instantly. No API call, no tokens spent.
 
 If nothing matches, it forwards the request to the real API as normal, caches the response, and returns it.
 
-## Works with any LLM provider
+## Plug it in
 
-CacheLayer is provider-agnostic. Point it at OpenAI, Anthropic, Cohere, or any OpenAI-compatible API.
+```python
+# Before
+client = OpenAI(base_url="https://api.openai.com")
+
+# After — works identically, now with caching
+client = OpenAI(base_url="https://cachelayer.up.railway.app")
+```
+
+Every existing call works identically. One line change, zero refactoring.
+
+## Headers
+
+```bash
+# Register for a key first
+curl -X POST "https://cachelayer.up.railway.app/register?email=you@example.com"
+
+# Then pass both headers on every request
+-H "Authorization: Bearer cl_your_key_here"   # your CacheLayer key
+-H "X-Upstream-Key: sk_your_openai_key"        # your actual provider key
+```
+
+## Architecture
+Client App
+│
+│  POST /v1/chat/completions
+▼
+CacheLayer Proxy  (FastAPI, Railway)
+│
+│  embed query → cosine similarity search
+▼
+SQLite Cache (per-user isolated)
+│
+├── HIT  → return in ~8ms, $0.00 tokens
+│
+└── MISS → forward to OpenAI / Anthropic → cache → return
+
+## Providers
+
+Supports OpenAI, Anthropic, and any OpenAI-compatible API. CacheLayer automatically detects which provider to route to based on the model name — no configuration needed.
 
 ```python
 # OpenAI
 client = OpenAI(base_url="https://cachelayer.up.railway.app")
+response = client.chat.completions.create(model="gpt-4o", ...)
 
-# Anthropic via compatible wrapper
+# Anthropic
 client = Anthropic(base_url="https://cachelayer.up.railway.app")
-
-# Any OpenAI-compatible provider
-client = OpenAI(base_url="https://cachelayer.up.railway.app")
+response = client.messages.create(model="claude-3-5-sonnet-20241022", ...)
 ```
-
-That is it. Every existing call works identically. One line change, zero refactoring.
-
-## Shared team cache
-
-In enterprise deployments, CacheLayer maintains a shared cache across your entire team. When one person on your team asks a question, everyone else gets the cached answer instantly — regardless of how they phrase it. A consultant who ran an analysis last week does not cost the firm another API call when a colleague asks the same question differently on Monday morning.
-
-This means cost savings compound with team size. A 10-person team asking semantically similar questions throughout the week can see cache hit rates far above what any individual user would generate alone.
-
-## Live deployment
-https://cachelayer.up.railway.app
-
-Health check: `GET https://cachelayer.up.railway.app/health`
-Stats: `GET https://cachelayer.up.railway.app/stats`
 
 ## Results
 
@@ -53,9 +75,33 @@ Evaluated across 15 paraphrased query pairs spanning enterprise software, financ
 | 0.90      | 33.3%    | 300          | $0.0015    |
 | 0.95      | 0.0%     | 0            | $0.0000    |
 
-0.80 is the sweet spot. Below that you risk returning wrong answers for queries that are similar but not the same. Above it you start missing valid hits. At 0.80 you catch 93% of paraphrased duplicates while staying precise enough to be trustworthy.
+**0.80 is the sweet spot.** Below that you risk returning wrong answers for queries that are similar but not identical. Above it you start missing valid hits.
 
-At scale this compounds quickly. An enterprise tool handling 10,000 queries per day with a 70% paraphrase rate saves roughly $3/day on GPT-4o output tokens alone, over $1,000 per year for a single deployment.
+## Latency
+
+| Metric | Value |
+|--------|-------|
+| Cache hit avg latency | 8.3ms |
+| Cache miss avg latency | 8.5ms |
+| Live API baseline (GPT-4o) | ~1,800ms |
+| Speedup on cache hit | **216x** |
+| Token cost on cache hit | **$0.00** |
+
+## When to use semantic caching
+
+Semantic caching works best for:
+- Knowledge-style queries with stable, deterministic answers
+- Internal tools, support assistants, and pre-sales AI where users rephrase the same questions
+- High-traffic applications where query paraphrase rates are significant
+
+Avoid caching for:
+- Queries that are highly user-specific or personalized
+- Time-sensitive prompts where the correct answer changes frequently
+- Queries involving private user data that should never be shared across sessions
+
+## Enterprise: shared team cache
+
+In multi-tenant deployments, each user gets an isolated cache scoped to their API key. One person's cached queries are never returned to another user. When a team works in the same domain, each member benefits from their own cache growing independently.
 
 ## Run it locally
 
@@ -76,12 +122,25 @@ docker run -p 8000:8000 -v cachelayer_data:/data cachelayer
 
 ## Endpoints
 
-- `POST /v1/chat/completions` — drop-in replacement for any OpenAI-compatible endpoint
-- `GET /stats` — hit rate, tokens saved, cost saved in real time
+- `POST /v1/chat/completions` — drop-in replacement for OpenAI and Anthropic
+- `POST /register` — register and receive a `cl_` API key
+- `GET /stats` — hit rate, tokens saved, cost saved, top queries (per user)
 - `POST /seed` — pre-load the cache with known Q&A pairs
+- `POST /warm` — pre-embed a list of expected queries before traffic arrives
 - `GET /health` — health check
+
+## Tests
+
+```bash
+pytest tests/test_cache.py -v
+```
+
+10 tests covering cache hits, misses, TTL expiry, threshold boundaries, per-user isolation, and stats accuracy. CI runs on every push via GitHub Actions.
 
 ## Stack
 
-Python, FastAPI, sentence-transformers, NumPy, SQLite, Docker
-EOF
+Python, FastAPI, sentence-transformers, NumPy, SQLite, Docker, Railway, slowapi
+
+## Live
+
+[cachelayer.up.railway.app](https://cachelayer.up.railway.app)
