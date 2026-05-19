@@ -20,7 +20,8 @@ ANTHROPIC_BASE = "https://api.anthropic.com"
 
 @app.get("/", response_class=HTMLResponse)
 async def landing():
-    with open("landing.html", "r") as f:
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(base_dir, "landing.html"), "r") as f:
         return f.read()
 
 def is_anthropic(model: str) -> bool:
