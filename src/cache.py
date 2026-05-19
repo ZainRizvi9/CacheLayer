@@ -81,6 +81,11 @@ class SemanticCache:
         now = time.time()
 
         with self._conn() as conn:
+            # Ensure stats row exists even for test users not created via register
+            conn.execute("""
+                INSERT OR IGNORE INTO stats (user_id, total_queries, cache_hits, tokens_saved)
+                VALUES (?, 0, 0, 0)
+            """, (user_id,))
             conn.execute(
                 "UPDATE stats SET total_queries = total_queries + 1 WHERE user_id = ?",
                 (user_id,)
@@ -116,6 +121,11 @@ class SemanticCache:
                 INSERT INTO cache (user_id, query, response, embedding, timestamp)
                 VALUES (?, ?, ?, ?, ?)
             """, (user_id, query, response, json.dumps(emb.tolist()), time.time()))
+            # Ensure stats row exists even for test users not created via register
+            conn.execute("""
+                INSERT OR IGNORE INTO stats (user_id, total_queries, cache_hits, tokens_saved)
+                VALUES (?, 0, 0, 0)
+            """, (user_id,))
 
     def stats(self, user_id: int) -> dict:
         with self._conn() as conn:
@@ -132,8 +142,10 @@ class SemanticCache:
             ).fetchall()
 
         if not row:
-            return {}
-        total, hits, tokens = row
+            total, hits, tokens = 0, 0, 0
+        else:
+            total, hits, tokens = row
+
         return {
             "total_queries":  total,
             "cache_hits":     hits,
